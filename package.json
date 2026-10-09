@@ -1,0 +1,28 @@
+{
+  "name": "@moto-taka/offload",
+  "version": "0.1.1",
+  "description": "Turn the current conversation into a grounded plan and offload it to one provider-managed cloud.",
+  "type": "module",
+  "bin": {
+    "offload": "skills/offload/scripts/offload.mjs"
+  },
+  "engines": {
+    "node": ">=26.0.0 <27.0.0"
+  },
+  "scripts": {
+    "test": "node --test tests/*.test.mjs",
+    "check": "node scripts/check.mjs",
+    "verify": "npm run check && npm test"
+  },
+  "files": [
+    "skills",
+    "types",
+    "README.md",
+    "LICENSE"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/moto-taka/offload.git"
+  },
+  "license": "MIT"
+}

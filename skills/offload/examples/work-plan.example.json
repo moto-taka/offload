@@ -1,0 +1,179 @@
+{
+  "schema_version": "2.0",
+  "title": "架空例: ログイン失敗時の無限再試行を修正する",
+  "objective": "既存のログインUIを維持したまま、失敗時の再試行回数に上限を設け、回帰テストで確認する。",
+  "coverage": {
+    "context": "partial",
+    "limitations": [
+      "これは設計検証用の架空fixtureです。コード・実行環境・実際の会話は参照していません。"
+    ]
+  },
+  "scope": {
+    "in": [
+      "ログイン処理の再試行制御",
+      "該当する回帰テスト"
+    ],
+    "out": [
+      "UIデザイン変更",
+      "認証基盤の置き換え",
+      "本番デプロイ"
+    ]
+  },
+  "evidence": [
+    {
+      "id": "E1",
+      "kind": "user_statement",
+      "locator": "fixture:message-1",
+      "summary": "架空のユーザー要望: 失敗時に再試行が止まらない。上限は3回とする。"
+    },
+    {
+      "id": "E2",
+      "kind": "user_statement",
+      "locator": "fixture:message-2",
+      "summary": "架空の追加指示: UIと表示文言は変えず、テストして報告する。PRとdeployは不要。"
+    }
+  ],
+  "requirements": [
+    {
+      "id": "R1",
+      "text": "失敗時の自動再試行は最大3回とする。初回を含めるかは実装前に仕様を確認する。",
+      "evidence_refs": [
+        "E1"
+      ]
+    },
+    {
+      "id": "R2",
+      "text": "UIと既存の表示文言を変更しない。",
+      "evidence_refs": [
+        "E2"
+      ]
+    }
+  ],
+  "decisions": [
+    {
+      "id": "D1",
+      "statement": "認証基盤を置き換えず、再試行制御の最小修正に限定する。",
+      "rationale": "架空例ではUIを維持した不具合修正のみが依頼されているため。",
+      "evidence_refs": [
+        "E1",
+        "E2"
+      ]
+    }
+  ],
+  "current_state": [
+    {
+      "id": "F1",
+      "summary": "再試行が止まらない症状がユーザーから報告された。再現・原因特定・修正・テストは未実施。",
+      "status": "in_progress",
+      "verification": "user_reported",
+      "evidence_refs": [
+        "E1"
+      ]
+    }
+  ],
+  "tasks": [
+    {
+      "id": "T1",
+      "title": "再現と仕様確認",
+      "action": "対象コードと既存仕様を確認し、失敗時の再試行を再現する。上限の初回カウント方式を仕様から確定できなければ確認を求める。",
+      "depends_on": [],
+      "requirement_ids": [
+        "R1",
+        "R2"
+      ],
+      "acceptance_ids": [
+        "AC1",
+        "AC2"
+      ],
+      "file_hints": [],
+      "evidence_refs": [
+        "E1",
+        "E2"
+      ]
+    },
+    {
+      "id": "T2",
+      "title": "最小修正",
+      "action": "確定したカウント方式で上限を実装する。UIと表示文言は変更しない。",
+      "depends_on": [
+        "T1"
+      ],
+      "requirement_ids": [
+        "R1",
+        "R2"
+      ],
+      "acceptance_ids": [
+        "AC1",
+        "AC2"
+      ],
+      "file_hints": [],
+      "evidence_refs": [
+        "E1",
+        "E2"
+      ]
+    },
+    {
+      "id": "T3",
+      "title": "回帰検証と報告",
+      "action": "失敗・途中成功・上限到達のケースを検証する。実際のテストコマンドは対象repoから確認し、成功・失敗・未実行を分けて報告する。",
+      "depends_on": [
+        "T2"
+      ],
+      "requirement_ids": [
+        "R1",
+        "R2"
+      ],
+      "acceptance_ids": [
+        "AC1",
+        "AC2"
+      ],
+      "file_hints": [],
+      "evidence_refs": [
+        "E2"
+      ]
+    }
+  ],
+  "acceptance_criteria": [
+    {
+      "id": "AC1",
+      "description": "確定した仕様に従い3回上限で止まり、成功時は後続の再試行を行わない。",
+      "verification_method": "失敗継続・途中成功・上限到達の回帰テストを実行し、観測結果を保存する。",
+      "requirement_ids": [
+        "R1"
+      ]
+    },
+    {
+      "id": "AC2",
+      "description": "既存UIと表示文言が維持されている。",
+      "verification_method": "差分と関連するUIテストを確認する。利用可能な証拠と未検証部分を区別する。",
+      "requirement_ids": [
+        "R2"
+      ]
+    }
+  ],
+  "constraints": [
+    "PR作成と本番deployはしない。",
+    "秘密値をPlanや結果へ記載しない。",
+    "最初にCoreが指定したrepo/ref/commitとの一致を確認する。"
+  ],
+  "open_questions": [
+    {
+      "id": "Q1",
+      "question": "3回の上限に初回の試行を含めるか。",
+      "blocking": false,
+      "resolution": "T1で対象repoの仕様・既存テストから調査する。解消できなければT2着手前に確認する。",
+      "evidence_refs": [
+        "E1"
+      ]
+    }
+  ],
+  "deliverables": [
+    "依頼範囲の変更差分",
+    "実際のテスト結果と未実行項目",
+    "未解決事項の報告"
+  ],
+  "next_action": {
+    "task_id": "T1",
+    "instruction": "指定snapshotとの一致を確認してから、既存仕様と再試行実装を調査する。"
+  }
+}

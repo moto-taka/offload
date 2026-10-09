@@ -1,0 +1,80 @@
+{
+  "schema_version": "2.0",
+  "profile": "development",
+  "source_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "platform": {
+    "os_family": "linux",
+    "distribution_hint": null
+  },
+  "runtimes": [
+    {
+      "name": "node",
+      "version_requirement": "26",
+      "source_refs": [
+        ".node-version"
+      ]
+    }
+  ],
+  "package_manager": {
+    "name": "pnpm",
+    "version_requirement": "10",
+    "lockfiles": [
+      "pnpm-lock.yaml"
+    ]
+  },
+  "install": [
+    {
+      "label": "ロックファイルに従い依存関係を取得",
+      "argv": [
+        "pnpm",
+        "install",
+        "--frozen-lockfile"
+      ],
+      "cwd": ".",
+      "source_refs": [
+        "package.json",
+        "pnpm-lock.yaml"
+      ]
+    }
+  ],
+  "start": [],
+  "health_checks": [
+    {
+      "label": "ランタイムを確認",
+      "argv": [
+        "node",
+        "--version"
+      ],
+      "cwd": ".",
+      "source_refs": [
+        ".node-version"
+      ]
+    }
+  ],
+  "tests": [
+    {
+      "label": "テストが実行できることを確認",
+      "argv": [
+        "pnpm",
+        "test"
+      ],
+      "cwd": ".",
+      "source_refs": [
+        "package.json"
+      ]
+    }
+  ],
+  "required_secret_names": [],
+  "public_network_requirements": [
+    {
+      "hostname": "registry.npmjs.org",
+      "purpose": "依存パッケージ取得"
+    }
+  ],
+  "source_refs": [
+    ".node-version",
+    "package.json",
+    "pnpm-lock.yaml"
+  ],
+  "unresolved": []
+}
