@@ -11,7 +11,7 @@
   → Cloudの受付情報を元の会話へ
 ```
 
-**0.1.1 / experimental** — 実行コードと自動テストを含みます。実アカウントのCloud作成・課金を伴うE2Eは未検証です。スキルをインストールしても、各社の認証やCloud権限が自動で付くわけではありません。
+**0.1.2 / experimental** — 実行コードと自動テストを含みます。実アカウントのCloud作成・課金を伴うE2Eは未検証です。スキルをインストールしても、各社の認証やCloud権限が自動で付くわけではありません。
 
 ## skills.shからインストール
 
@@ -88,10 +88,18 @@ node "<installed-skill>/scripts/offload.mjs" resume "ofl_<job-id>"
 
 | 送り先 | 実装した経路 | 実行時に必要な条件／制限 |
 |---|---|---|
-| **新Codex Cloud** | ホストのブラウザ操作＋永続化された`ui-begin`／`ui-record`プロトコル | 接続済みブラウザが必要。スキルが公式UIで環境準備・Publish・送信を進めます。内蔵の自動ブラウザやLegacy CLIへの切替はありません |
+| **新Codex Cloud** | ChatGPT設定画面から**Cloud Environment Onboarding: Setup**を実行。結果とタスク送信は`ui-begin`／`ui-record`で記録 | 未認証ならログインを依頼し、同じjobを再開。環境の作成・設定・PublishをOffload側で個別操作しません。接続済みホストが必要で、CLIやLegacyへの切替はありません |
 | **Claude Code Cloud** | 正規CLIで認証確認・管理Cloudへの投入 | CLI 2.1.224以降、claude.ai OAuth、管理Cloudの確認。独立したdepth-1 snapshot checkoutから送信。進捗は公式UIで確認する場合があります |
 | **Cursor Cloud** | API v1の個人環境作成／所有環境更新・Build確認・Agent/Run送信と状態取得 | ユーザーAPIキー。名前付き環境を明示し、開始時に指定commitを検証する方式への承認が必要。`env`と`repos`は混在させません |
 | **Devin** | v3beta1 Blueprint作成＋明示Build、v3 Session送信・状態取得 | 環境管理権限と組織Snapshotの影響範囲の承認。既存／外部変更された共有Blueprintの上書き・自動採用は行わず確認で停止 |
+
+新Codexの環境準備では、`https://chatgpt.com/settings/codex-cloud`から、次の指示だけを実行します（URLは対象repoに置き換えます）。
+
+```text
+Cloud Environment Onboarding: Setup を使って、https://github.com/<owner>/<repo> のクラウド環境をセットアップしてください。未認証の場合は、ログインを求めてください。
+```
+
+Setup完了後に保存済みのWorkPlanをCloudへ送ります。Setupの名前・実行方法はユーザー指定の運用で、Offloadの公式CLIコマンドではありません。この更新では実アカウントでのSetup実行は未検証です。
 
 ここでいう実装はローカル・モックの契約試験済みコードです。**4社の本番API／CLI／UIでの接続成功を確認したという意味ではありません。** beta API、CLIのJSON、UIに差異があれば処理を止めます。
 

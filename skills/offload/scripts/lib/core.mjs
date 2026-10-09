@@ -8,6 +8,7 @@ import { capture, inspectRecipe, verifyCapture, publishSnapshot } from './git.mj
 import { adapter } from './providers.mjs';
 import { digest, makeId, inside, requireThat, fail, writePrivate, officialUrl, scanSecrets } from './safety.mjs';
 import { remoteId } from './http.mjs';
+import { codexOnboarding, renderCodexOnboarding, CODEX_SETTINGS_URL } from './codex-onboarding.mjs';
 
 export function publicJob(j) {
   return { id:j.id, state:j.state, provider:j.provider, repository:j.repository, planHash:j.planHash, recipeHash:j.recipeHash, manifestHash:j.manifestHash, approvalHash:j.approvalHash, dispatchHash:j.dispatchHash, accountLabel:j.accountLabel, bindingId:j.bindingId, environment:j.environment, snapshot:j.snapshot, receipt:j.receipt, observation:j.observation, error:j.error, preview:j.preview };
@@ -64,12 +65,13 @@ export class Core {
   }
   async submit(id){return this.store.locked(`job:${id}`,async()=>{
     const current=this.store.get(id);if(current.receipt)return publicJob(current);
+    if(current.provider==='codex'&&current.state==='NEEDS_AUTH')return publicJob(current);
     const completed=this.store.operation(`${id}:task`) || this.store.operation(`${id}:ui:task`);
     if(completed?.state==='DONE'){current.receipt=JSON.parse(completed.result);current.state='SUBMITTED';delete current.error;this.store.save(current);return publicJob(current);}
     let x;try{
       x=this.inputs(id);this.approved(x);verifyCapture(x.manifest);const{job,binding,recipe,plan,manifest}=x;job.accountLabel=binding.accountLabel;job.bindingId=binding.id;
       if(job.provider==='codex'){
-        job.state='NEEDS_UI_DRIVER';job.error={code:'NEEDS_UI_DRIVER',message:'Use the installed skill with a connected browser tool and the ui-begin/ui-record workflow. No legacy CLI fallback.'};this.store.save(job);return publicJob(job);
+        job.state='NEEDS_UI_DRIVER';job.error={code:'NEEDS_UI_DRIVER',message:'Open ChatGPT Codex Cloud settings and run Cloud Environment Onboarding: Setup. Request login if needed; follow references/codex-ui.md for the saved job.',details:{onboarding:codexOnboarding(job.repository)}};this.store.save(job);return publicJob(job);
       }
       if(job.provider==='cursor'){const override=manifest.files.find(f=>f.path==='.cursor/environment.json');if(override){let value;try{value=JSON.parse(Buffer.from(override.data,'base64').toString());}catch{fail('ENV_BINDING_AMBIGUOUS','Repository Cursor environment JSON is invalid.');}requireThat(digest(value)===digest(cursorEnvironment(recipe)),'ENV_BINDING_AMBIGUOUS','Repository .cursor/environment.json differs from the approved environment configuration.');}}
       const a=adapter(this.store,binding,this.options);
@@ -106,16 +108,29 @@ export class Core {
     const payload={stage,account:binding.accountLabel,repository:job.repository,planHash:job.planHash,recipeHash:job.recipeHash,environment:job.environment||null,snapshot:job.snapshot||null};
     const op=`${id}:ui:${stage}`,old=this.store.operation(op);
     if(old?.state==='DONE')return{done:true,result:JSON.parse(old.result)};
-    if(old){const intent=this.store.read(id,`ui-${stage}.json`);return{...intent,reconcileOnly:true,instruction:'An earlier UI write may have succeeded. Inspect existing state. Do not create/publish/send again.'};}
-    const intent={...payload,nonce:randomUUID(),jobId:id,operationId:op,reconcileOnly:false};
+    if(old&&old.state!=='REJECTED'){const intent=this.store.read(id,`ui-${stage}.json`);return{...intent,reconcileOnly:true,artifactPath:this.store.file(id,stage==='task'?'dispatch.md':'environment-setup.md'),instruction:'Resume or inspect the existing Setup/task interaction. Do not start another Setup or send again while its outcome is unknown.'};}
+    const intent={...payload,nonce:randomUUID(),jobId:id,operationId:op,reconcileOnly:false,...(stage==='environment'?{onboarding:codexOnboarding(job.repository)}:{})};
     this.store.artifact(id,`ui-${stage}.json`,intent);this.store.startOperation(op,payload);
     if(stage==='task'){const prompt=renderExecution(job,plan,recipe,binding);writePrivate(this.store.file(id,'dispatch.md'),prompt);job.dispatchHash=digest(prompt);job.state='SUBMITTING';}
-    else{writePrivate(this.store.file(id,'environment-setup.md'),`Prepare a PERSONAL new Codex Cloud environment for https://github.com/${job.repository}. Verify account ${binding.accountLabel}. Use only this reviewed recipe. Do not change source, secrets, access, purchases, or existing shared environments. Test required commands and Publish. Record observable results; stop at login/consent.\n\n${JSON.stringify(recipe,null,2)}\n`);job.state='ENVIRONMENT_PREPARING';}
-    this.store.save(job);return{...intent,artifactPath:this.store.file(id,stage==='task'?'dispatch.md':'environment-setup.md')};
+    else{writePrivate(this.store.file(id,'environment-setup.md'),renderCodexOnboarding(job.repository));job.state='ENVIRONMENT_PREPARING';}
+    delete job.error;this.store.save(job);return{...intent,artifactPath:this.store.file(id,stage==='task'?'dispatch.md':'environment-setup.md')};
   });}
   async uiRecord(id,stage,evidence){return this.store.locked(`job:${id}`,async()=>{
     const x=this.inputs(id);this.approved(x);const{job,binding}=x;requireThat(job.provider==='codex'&&['environment','task'].includes(stage),'INVALID_UI_STAGE','Invalid UI stage.');
     scanSecrets(evidence,'browser observation');const intent=this.store.read(id,`ui-${stage}.json`),op=`${id}:ui:${stage}`;
+    if(stage==='environment'&&evidence.status==='NEEDS_AUTH'){
+      requireThat(evidence.nonce===intent.nonce,'OBSERVATION_MISMATCH','Authentication observation must match the saved Setup attempt.');
+      requireThat(Array.isArray(evidence.evidenceRefs)&&evidence.evidenceRefs.length>0&&evidence.evidenceRefs.every(v=>typeof v==='string'&&v.length>0),'MISSING_EVIDENCE','Include an actual observation of the login requirement.');
+      officialUrl(evidence.url,'codex');
+      requireThat(!evidence.environmentId&&!evidence.taskId&&evidence.published!==true&&evidence.accepted!==true,'OBSERVATION_MISMATCH','A login blocker is not a completed environment or task.');
+      requireThat(evidence.setupStarted===undefined||typeof evidence.setupStarted==='boolean','OBSERVATION_MISMATCH','setupStarted must be a boolean when known.');
+      requireThat(this.store.operation(op)?.state!=='DONE','OPERATION_CHANGED','A completed Setup cannot be changed into a login failure.');
+      // Only an observed pre-send login gate proves that no Setup was submitted.
+      // A login request inside a running/unknown Setup keeps the original intent.
+      if(evidence.setupStarted===false)this.store.rejectOperation(op);
+      job.state='NEEDS_AUTH';job.error={code:'NEEDS_AUTH',message:'ChatGPTへのログインをお願いします。ログイン後、保存済みの同じoffload依頼を再開してください。',details:{loginUrl:CODEX_SETTINGS_URL}};
+      this.store.observe(id,{stage,evidence});this.store.save(job);return publicJob(job);
+    }
     requireThat(evidence.nonce===intent.nonce&&evidence.account===binding.accountLabel&&evidence.repository===job.repository&&evidence.flavor==='codex_new_ui','OBSERVATION_MISMATCH','Browser observation must match the saved account/repository/new Cloud intent.');
     requireThat(Array.isArray(evidence.evidenceRefs)&&evidence.evidenceRefs.length>0&&evidence.evidenceRefs.every(v=>typeof v==='string'&&v.length>0),'MISSING_EVIDENCE','Include actual host browser tool observation references, not guesses.');
     requireThat(evidence.recipeHash===job.recipeHash,'OBSERVATION_MISMATCH','Recipe fingerprint differs.');

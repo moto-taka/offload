@@ -1,8 +1,8 @@
-# v2.0設計に対する実装範囲 — 0.1.1
+# v2.0設計に対する実装範囲 — 0.1.2
 
 ## 実行コードとして含むもの
 
-Plan/Recipeの厳格な構造検査と参照関係検査、現在ホストのPlan生成手順、Nodeプロジェクトの静的レシピ検出、明示レシピ入力、SQLite台帳、ジョブ・環境ロック、承認fingerprint、非同期外部処理の受付と再開、正確なファイルツリーの隔離Git snapshot、4社のAdapter、Codexホストブラウザ手順と観測プロトコル、Pi拡張、OpenCodeローダー、skill配布、read-onlyのstatus。
+Plan/Recipeの厳格な構造検査と参照関係検査、現在ホストのPlan生成手順、Nodeプロジェクトの静的レシピ検出、明示レシピ入力、SQLite台帳、ジョブ・環境ロック、承認fingerprint、非同期外部処理の受付と再開、正確なファイルツリーの隔離Git snapshot、4社のAdapter、CodexのChatGPT Setup呼び出しと観測プロトコル、Pi拡張、OpenCodeローダー、skill配布、read-onlyのstatus。
 
 ## 検証区分
 
@@ -19,6 +19,7 @@ Plan/Recipeの厳格な構造検査と参照関係検査、現在ホストのPla
 - 自動レシピ検出はNodeの単一ロックファイル構成。他言語・モノレポは明示レシピを現在エージェントが作ります。
 - Cursorのnamed envを優先。startingRefと同時指定できないため、承認済みの実行前Gitゲートを使います。API応答から正しいactive imageを断定せず、Build成功はLAUNCHABLEとして実行先に再確認させます。
 - Devinの既存共有Blueprintの自動上書き・採用、snapshot pin/cancel、組織内の他案件変更は行いません。既存環境の新しい構成を適用するには手動レビューが必要です。
+- Codexの環境準備は`https://chatgpt.com/settings/codex-cloud`から`Cloud Environment Onboarding: Setup`を実行する方式です。個別の環境作成・依存インストール・Publish操作は委譲し、未認証なら本人のログインを求めます。Setup名はユーザー指定であり、実アカウントでの動作確認とは区別します。認証前に未送信と観測できた場合だけ同一jobを再開し、Setup開始後の認証要求や成否不明は元の操作の再開・照合に限定します。
 - CodexのGUIエンジンは内蔵しません。現在ホストの正規ブラウザ操作能力を利用するスキルです。観測JSONの形と一致はCoreが検査しますが、本当に画面を見たことの証明はホスト側のツール履歴に依存します。
 - UIやAPIの成否不明を「未作成」として再実行しません。安全に自動照合できない場合は停止。リモート操作の完全exactly-once保証は主張しません。
 - 状態取得は単発。常駐監視、通知、ホスト終了後のpoll、期限による自動削除はありません。Runtime stateはOS別ユーザー領域です。

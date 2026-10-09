@@ -41,3 +41,9 @@ This document update records the completed CI run; it does not change the tested
 - Direct installation using `npx skills add moto-taka/offload --skill offload` and skills.sh catalog indexing were not separately verified here. The supported GitHub-source layout and the actual CLI checkout-install test are present.
 
 A source push or successful skill installation does not establish that provider Cloud execution has been verified. Adapters remain opt-in and must be configured for the intended account and repository.
+
+## v0.1.2 — Codex onboarding update (2026-10-10)
+
+The new Codex environment step now delegates to the user-specified **Cloud Environment Onboarding: Setup** workflow from `https://chatgpt.com/settings/codex-cloud`. This removes Offload's separate provisioning-click instructions; task dispatch still uses the observed environment and existing receipt protocol.
+
+All 110 local tests passed on Node.js v22.16.0, including the 10 new onboarding/login tests. The existing CI matrix remains Node.js 26.0.0 and 26. CI results for this update are reported separately; the earlier v0.1.1 CI result above is not verification of v0.1.2. No actual ChatGPT Setup invocation, login, environment creation or paid Cloud task was performed during these tests.

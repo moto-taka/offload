@@ -32,7 +32,11 @@ For a user's intentionally unattended workflow, set `autoApprove: true` and add 
 
 ### New Codex Cloud
 
-Connect a host browser/computer tool authenticated to the intended account. Use only the new Codex Cloud UI. `environmentId` optionally names a verified existing personal environment. `allowEnvironmentCreate` permits environment preparation, not organization-wide access changes. `allowPromptGitGate` acknowledges that the UI path uses an agent instruction to verify/fetch the exact snapshot; it is not a native API commit lock. See codex-ui.md. No old `codex cloud exec` fallback is present.
+Open https://chatgpt.com/settings/codex-cloud through the calling host and run **Cloud Environment Onboarding: Setup** with the target repository: `Cloud Environment Onboarding: Setup を使って、https://github.com/<owner>/<repo> のクラウド環境をセットアップしてください。未認証の場合は、ログインを求めてください。`
+
+Offload delegates environment creation/configuration to this ChatGPT workflow; it does not duplicate the Create/Install/Publish sequence. If authentication is missing, ask the user to log in on the official page, then resume the same saved job. Do not ask for passwords, cookies or tokens in chat. An environment ID is obtained from the actual Setup result, not required as interactive setup input. Existing verified environments can be reused.
+
+`setup codex` returns the `onboarding` URL/skill/prompt for the host to execute; the Node CLI cannot itself execute a ChatGPT UI skill. `allowEnvironmentCreate` and the reviewed account/repository scope still apply. Task dispatch and its `allowPromptGitGate` check are unchanged. See codex-ui.md. No old CLI, Legacy, API-billing or local fallback is present.
 
 ### Claude Code Cloud
 

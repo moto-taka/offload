@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.2 — 2026-10-10
+
+- Delegate new Codex environment setup to ChatGPT Settings → **Cloud Environment Onboarding: Setup** with a repository-specific prompt. Remove the duplicated Create/Install/Publish instructions and manual environment-ID question.
+- Return the host-executable onboarding request from setup and environment intent. Preserve the Plan and ask for login on `NEEDS_AUTH`; retry only an observed unsent Setup and reconcile an already-started one.
+- Keep task dispatch, account/repository checks, readiness observations, Node.js 26 and the other providers unchanged. Real ChatGPT Setup execution remains unverified.
+
 ## 0.1.1 — 2026-10-09
 
 - Target Node.js 26.x (`>=26.0.0 <27.0.0`) in package metadata, standalone skill requirements, and CLI help.

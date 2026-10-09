@@ -5,7 +5,7 @@ disable-model-invocation: true
 license: MIT
 compatibility: Requires Node.js 26.x (>=26.0.0 <27.0.0) and Git. Provider login/API access is configured separately. New Codex needs a connected host browser tool. Pi and OpenCode can install optional slash-command shims.
 metadata:
-  version: 0.1.1
+  version: 0.1.2
   repository: https://github.com/moto-taka/offload
 ---
 
@@ -82,7 +82,7 @@ If approved, the Core ensures an environment, publishes only the reviewed snapsh
 
 For `ENVIRONMENT_BUILDING`, keep the saved job and use `resume` after the build is ready while this session is active. Do not claim the host will continue monitoring after it closes. For `NEEDS_APPROVAL` or `NEEDS_SETUP`, show the exact missing requirement and the setup guide; do not invent approval. New untracked files always require a fresh human review even under a remembered recipe policy.
 
-For `NEEDS_UI_DRIVER` on **new Codex**, follow [codex-ui.md](references/codex-ui.md) with a genuinely connected host browser/computer tool. The runtime journals intent before a click; do not bypass it. A missing browser is a blocker, not permission to use the old CLI.
+For **new Codex environment setup**, open `https://chatgpt.com/settings/codex-cloud` through the connected host and execute the generated instruction using **Cloud Environment Onboarding: Setup**. Offload does not separately navigate environment creation, install dependencies, or click Publish; Setup owns that flow. If signed out, ask the user to log in and resume the same saved job. Follow [codex-ui.md](references/codex-ui.md) to record the result and then send the WorkPlan. On `NEEDS_AUTH`, handle login rather than starting another Setup. On `NEEDS_UI_DRIVER`, use an actually connected host browser/computer tool or report that it is missing. Do not fall back to the old CLI.
 
 For ambiguous submission/write results, inspect/reconcile the saved operation. Never re-click or create another task as a retry. The runtime may intentionally require manual review rather than guess.
 
