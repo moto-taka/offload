@@ -1,4 +1,4 @@
-import { readFileSync, lstatSync, existsSync, realpathSync, mkdtempSync, rmSync } from 'node:fs';
+import { readFileSync, readlinkSync, lstatSync, realpathSync, mkdtempSync, rmSync, openSync, closeSync, fstatSync, constants } from 'node:fs';
 import path from 'node:path';
 import { executable, run, requireThat, repository, digest, relativePath, scanSecrets, secretFile, privateDir, inside, fail } from './safety.mjs';
 
@@ -8,43 +8,159 @@ export function git(cwd, args, options = {}) {
   Object.assign(env, options.env || {});
   return run(options.binary || executable('git', cwd), ['-c','core.fsmonitor=false','-c','core.hooksPath=' + (process.platform === 'win32' ? 'NUL' : '/dev/null'), ...args], { ...options, env, cwd });
 }
-export function capture(cwd) {
-  const root = realpathSync(git(cwd, ['rev-parse','--show-toplevel']));
-  const head = git(root, ['rev-parse','HEAD']);
+// Read Git identity without scanning/exporting the worktree. Setup must not depend on exportability.
+export function repositoryInfo(cwd) {
+  const root = realpathSync(git(cwd, ['rev-parse', '--show-toplevel']));
+  const head = git(root, ['rev-parse', 'HEAD']);
   requireThat(/^[a-f0-9]{40,64}$/.test(head), 'GIT_EMPTY', 'Commit the repository before offloading.');
-  const remote = git(root, ['remote','get-url','origin']); const repo = repository(remote);
-  const pushRemote = git(root, ['remote','get-url','--push','origin']);
-  requireThat(repository(pushRemote) === repo, 'REMOTE_MISMATCH', 'Origin fetch/push repositories differ.');
-  const entries = git(root, ['ls-files','--stage','-z']).split('\0').filter(Boolean);
+  const remote = git(root, ['remote', 'get-url', 'origin']);
+  const repo = repository(remote);
+  requireThat(repository(git(root, ['remote', 'get-url', '--push', 'origin'])) === repo,
+    'REMOTE_MISMATCH', 'Origin fetch/push repositories differ.');
+  let branch = null;
+  try { branch = git(root, ['symbolic-ref', '--quiet', '--short', 'HEAD']); } catch {}
+  return { root, head, branch, repository: repo, remote };
+}
+
+const MAX_FILE_BYTES = 100 * 1024 * 1024;
+const MAX_FILES = 100_000;
+
+// Never follow a symlink in an ancestor of an exported file.
+function filePath(root, name) {
+  relativePath(name);
+  const parts = name.split('/');
+  let parent = root;
+  for (const part of parts.slice(0, -1)) {
+    parent = path.join(parent, part);
+    const st = lstatSync(parent);
+    requireThat(st.isDirectory() && !st.isSymbolicLink(), 'UNSAFE_PATH',
+      'An export ancestor must be a real directory.', { location: name });
+  }
+  return path.join(root, name);
+}
+
+function sameFile(a, b) {
+  return a.dev === b.dev && a.ino === b.ino && a.size === b.size &&
+    a.mtimeMs === b.mtimeMs && a.ctimeMs === b.ctimeMs && a.mode === b.mode;
+}
+
+function fileContent(root, name) {
+  const full = filePath(root, name), before = lstatSync(full);
+  requireThat(before.isFile() || before.isSymbolicLink(), 'UNSUPPORTED_FILE',
+    'Only regular files and repository-internal symlinks are supported.', { location: name });
+  requireThat(before.size <= MAX_FILE_BYTES, 'EXPORT_TOO_LARGE',
+    'A single file exceeds the 100 MiB safety limit; no aggregate 20 MiB limit applies.', { location: name });
+  let data, mode;
+  if (before.isSymbolicLink()) {
+    // Git mode 120000 stores the link text, NOT the contents of its target.
+    data = Buffer.from(readlinkSync(full), 'utf8');
+    mode = '120000';
+  } else {
+    const fd = openSync(full, constants.O_RDONLY | (constants.O_NOFOLLOW || 0));
+    try {
+      requireThat(sameFile(before, fstatSync(fd)), 'SOURCE_CHANGED', 'File replaced during capture.', { location: name });
+      data = readFileSync(fd);
+      requireThat(sameFile(before, fstatSync(fd)), 'SOURCE_CHANGED', 'File changed during capture.', { location: name });
+    } finally { closeSync(fd); }
+    mode = (before.mode & 0o111) ? '100755' : '100644';
+  }
+  requireThat(sameFile(before, lstatSync(full)) && data.length === before.size,
+    'SOURCE_CHANGED', 'File changed during capture.', { location: name });
+  return { data, mode };
+}
+
+// Resolve links in the proposed Git tree, never in an external filesystem.
+// Covers directory links, chained links, loops, escape-after-expansion and absent targets.
+export function validateLinks(files) {
+  const entries = new Map(files.map(f => [f.path, f]));
+  const directories = new Set(['']);
+  for (const f of files) {
+    const parts = f.path.split('/');
+    for (let i = 1; i < parts.length; i++) directories.add(parts.slice(0, i).join('/'));
+  }
+  for (const link of files.filter(f => f.mode === '120000')) {
+    let queue = link.path.split('/'), resolved = [], hops = 0;
+    while (queue.length) {
+      const part = queue.shift();
+      if (part === '' || part === '.') continue;
+      if (part === '..') {
+        requireThat(resolved.length > 0, 'UNSAFE_SYMLINK', 'Symlink escapes the repository.', { location: link.path });
+        resolved.pop(); continue;
+      }
+      const candidate = [...resolved, part].join('/');
+      requireThat(!secretFile(candidate) && part.toLowerCase() !== '.git', 'UNSAFE_SYMLINK',
+        'Symlink targets credentials or Git metadata.', { location: link.path });
+      const entry = entries.get(candidate);
+      if (entry?.mode === '120000') {
+        const target = entry.linkTarget ?? Buffer.from(entry.data || '', 'base64').toString('utf8');
+        requireThat(++hops <= 40 && target && !/^[\/]/.test(target) && !/[\\:\x00-\x1f\x7f]/.test(target),
+          'UNSAFE_SYMLINK', 'Absolute, cyclic, or non-portable symlink.', { location: link.path });
+        queue = [...target.split('/'), ...queue];
+      } else {
+        requireThat(entry || directories.has(candidate), 'UNRESOLVED_SYMLINK',
+          'Symlink target is not present in the exported tree.', { location: link.path });
+        requireThat(!queue.length || directories.has(candidate), 'UNSAFE_SYMLINK',
+          'Symlink traverses a regular file.', { location: link.path });
+        resolved.push(part);
+      }
+    }
+    // A link to one of its own ancestor directories makes recursive tree consumers loop.
+    const destination = resolved.join('/');
+    requireThat(destination && !(link.path === destination || link.path.startsWith(destination + '/')),
+      'UNSAFE_SYMLINK', 'Symlink creates a recursive directory loop.', { location: link.path });
+  }
+}
+
+export function capture(cwd) {
+  const identity = repositoryInfo(cwd), { root, head, branch, repository: repo } = identity;
+  const entries = git(root, ['ls-files', '--stage', '-z']).split('\0').filter(Boolean);
   const tracked = new Set();
   for (const entry of entries) {
     const m = /^(\d+) ([a-f0-9]+) (\d)\t([\s\S]+)$/.exec(entry);
     requireThat(m && m[3] === '0', 'GIT_CONFLICT', 'Resolve Git conflicts before offloading.');
-    requireThat(['100644','100755'].includes(m[1]), 'UNSUPPORTED_FILE', 'Submodules and symbolic links are not exported.'); tracked.add(m[4]);
+    requireThat(['100644', '100755', '120000'].includes(m[1]), 'SUBMODULE_UNSUPPORTED',
+      'Git submodules require a separate export implementation.', { location: m[4] });
+    tracked.add(m[4]);
   }
-  const untracked = git(root, ['ls-files','--others','--exclude-standard','-z']).split('\0').filter(Boolean);
+  const untracked = git(root, ['ls-files', '--others', '--exclude-standard', '-z']).split('\0').filter(Boolean);
   const names = [...new Set([...tracked, ...untracked])].sort();
-  requireThat(names.length <= 10_000, 'EXPORT_TOO_LARGE', 'More than 10,000 files; narrow the repository before export.');
-  const files = [], deleted = [], lower = new Set(); let bytes = 0;
+  requireThat(names.length <= MAX_FILES, 'EXPORT_TOO_LARGE', 'More than 100,000 files in the proposed snapshot.');
+  const files = [], deleted = [], lower = new Set();
+  let bytes = 0;
   for (const name of names) {
     relativePath(name);
-    requireThat(!lower.has(name.toLowerCase()), 'CASE_COLLISION', 'Case-colliding filenames cannot be exported portably.'); lower.add(name.toLowerCase());
-    requireThat(!secretFile(name) && name !== '.gitmodules', 'SECRET_FILE', 'Credential or unsupported repository metadata file cannot be exported.', { location: name });
-    const full = path.join(root, name);
-    if (!existsSync(full)) { if (tracked.has(name)) deleted.push(name); continue; }
-    const stat = lstatSync(full);
-    requireThat(!stat.isSymbolicLink() && stat.isFile() && inside(root, realpathSync(full)), 'UNSAFE_PATH', 'Export paths must be regular files inside the repository.');
-    requireThat(stat.size <= 5 * 1024 * 1024, 'EXPORT_TOO_LARGE', 'A file exceeds 5 MiB.', { location: name });
-    const data = readFileSync(full); bytes += data.length;
-    requireThat(bytes <= 20 * 1024 * 1024, 'EXPORT_TOO_LARGE', 'Export exceeds 20 MiB.');
-    const after = lstatSync(full); requireThat(stat.mtimeMs === after.mtimeMs && stat.size === after.size, 'SOURCE_CHANGED', 'A file changed while being captured.');
+    requireThat(!lower.has(name.toLowerCase()), 'CASE_COLLISION', 'Case-colliding filenames cannot be exported portably.');
+    lower.add(name.toLowerCase());
+    requireThat(!secretFile(name) && name !== '.gitmodules', 'SECRET_FILE',
+      'Credential or unsupported repository metadata file cannot be exported.', { location: name });
+    let content;
+    try { content = fileContent(root, name); }
+    catch (e) { if (e.code === 'ENOENT') { if (tracked.has(name)) deleted.push(name); continue; } throw e; }
+    const { data, mode } = content;
+    bytes += data.length;
     scanSecrets(data, name);
-    if (name.endsWith('.gitattributes')) requireThat(!/filter\s*=\s*lfs/.test(data.toString()), 'LFS_UNSUPPORTED', 'Git LFS exports require a dedicated implementation.');
-    files.push({ path: name, mode: (stat.mode & 0o111) ? '100755' : '100644', hash: digest(data), bytes: data.length, untracked: !tracked.has(name), data: data.toString('base64') });
+    if (name.endsWith('.gitattributes')) requireThat(!/filter\s*=\s*lfs/.test(data.toString()),
+      'LFS_UNSUPPORTED', 'Git LFS exports require a dedicated implementation.');
+    // Metadata only: large repos no longer become huge base64 JSON artifacts.
+    files.push({ path: name, mode, hash: digest(data), bytes: data.length, untracked: !tracked.has(name),
+      ...(mode === '120000' ? { linkTarget: data.toString('utf8') } : {}) });
   }
-  let branch = null; try { branch = git(root, ['symbolic-ref','--quiet','--short','HEAD']); } catch {}
-  const fingerprint = digest({ head, branch, repo, files: files.map(({ data, ...f }) => f), deleted });
-  return { root, head, branch, repository: repo, remote, fingerprint, files, deleted, totalBytes: bytes };
+  validateLinks(files);
+  const fingerprint = digest({ head, branch, repo, files, deleted });
+  return { ...identity, fingerprint, files, deleted, totalBytes: bytes, formatVersion: 2 };
+}
+
+export function readCapturedFile(manifest, file) {
+  let data;
+  if (typeof file.data === 'string') data = Buffer.from(file.data, 'base64'); // old saved jobs
+  else {
+    const observed = fileContent(manifest.root, file.path);
+    requireThat(observed.mode === file.mode, 'SOURCE_CHANGED', 'Captured file type changed.', { location: file.path });
+    data = observed.data;
+  }
+  requireThat(data.length === file.bytes && digest(data) === file.hash,
+    'SOURCE_CHANGED', 'Captured file changed; prepare a new job rather than rebinding the Plan.', { location: file.path });
+  return data;
 }
 export function verifyCapture(saved) {
   const current = capture(saved.root);
@@ -53,12 +169,12 @@ export function verifyCapture(saved) {
 export function inspectRecipe(manifest) {
   const byPath = new Map(manifest.files.map(f => [f.path, f]));
   if (!byPath.has('package.json')) return { recipe: null, reason: 'Automatic recipe detection currently supports Node projects. Supply a reviewed v2.0 EnvironmentRecipe for other stacks.' };
-  let pkg; try { pkg = JSON.parse(Buffer.from(byPath.get('package.json').data, 'base64').toString('utf8')); } catch { return { recipe: null, reason: 'package.json is invalid.' }; }
+  let pkg; try { pkg = JSON.parse(readCapturedFile(manifest, byPath.get('package.json')).toString('utf8')); } catch { return { recipe: null, reason: 'package.json is invalid.' }; }
   const matches = [['pnpm','pnpm-lock.yaml'],['npm','package-lock.json'],['yarn','yarn.lock'],['bun','bun.lock']].filter(([, f]) => byPath.has(f));
   if (matches.length !== 1) return { recipe: null, reason: 'Exactly one recognized lockfile is needed for automatic environment generation.' };
   const [manager, lock] = matches[0], source = ['package.json',lock];
   const runtimes = [];
-  for (const f of ['.node-version','.nvmrc']) if (byPath.has(f)) { source.push(f); runtimes.push({ name: 'node', version_requirement: Buffer.from(byPath.get(f).data,'base64').toString().trim(), source_refs: [f] }); break; }
+  for (const f of ['.node-version','.nvmrc']) if (byPath.has(f)) { source.push(f); runtimes.push({ name: 'node', version_requirement: readCapturedFile(manifest, byPath.get(f)).toString().trim(), source_refs: [f] }); break; }
   if (!runtimes.length && pkg.engines?.node) runtimes.push({ name:'node',version_requirement:pkg.engines.node,source_refs:['package.json'] });
   const pmVersion = typeof pkg.packageManager === 'string' && pkg.packageManager.startsWith(manager + '@') ? pkg.packageManager.slice(manager.length + 1) : 'repository lockfile compatible; verify in cloud';
   const command = (label, argv) => ({label,argv,cwd:'.',source_refs:['package.json',lock]});
@@ -100,7 +216,7 @@ export function publishSnapshot(store, job, manifest, binding) {
     git(temp, ['read-tree','--empty']);
     const index = [];
     for (const f of manifest.files) {
-      const data = Buffer.from(f.data,'base64'); requireThat(digest(data) === f.hash, 'ARTIFACT_CHANGED', 'Captured file hash mismatch.');
+      const data = readCapturedFile(manifest, f);
       const blob = git(temp,['hash-object','-w','--stdin','--no-filters'],{input:data}); index.push(`${f.mode} ${blob}\t${f.path}\0`);
     }
     git(temp, ['update-index','-z','--index-info'], { input:index.join('') });

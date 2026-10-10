@@ -1,6 +1,6 @@
 {
   "name": "@moto-taka/offload",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Turn the current conversation into a grounded plan and offload it to one provider-managed cloud.",
   "type": "module",
   "bin": {

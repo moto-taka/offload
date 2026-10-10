@@ -1,4 +1,4 @@
-# v2.0設計に対する実装範囲 — 0.1.2
+# v2.0設計に対する実装範囲 — 0.1.3
 
 ## 実行コードとして含むもの
 
@@ -12,14 +12,14 @@ Plan/Recipeの厳格な構造検査と参照関係検査、現在ホストのPla
 
 ## 意図的な制限
 
-- 単一GitHubリポジトリ、単一PCの状態台帳。LFS・submodule・symlink・case衝突は停止。ファイル5MiB、全体20MiB、10,000ファイルまで。
-- dirty/untrackedを失わず、全ツリーを承認対象にします。除外したい場合は別のclean checkoutでPlanを準備するか、後続の明示allowlist機能が必要です。新しいuntrackedを自動許可しません。
+- 単一GitHubリポジトリ、単一PCの状態台帳。リポジトリ内で解決できるsymlinkはGit mode 120000で保持。外部・循環・欠落・秘密情報へのリンク、LFS・submodule・case衝突は停止。全体20MiB制限は撤廃し、ファイル100MiB・100,000ファイルをOffloadの安全上限とします。全社のCloud容量上限を保証する値ではありません。
+- dirty/untrackedを失わず、全ツリーを承認対象にします。検査を通すために勝手にcleanなdevelop/mainへ切り替えません。新しいuntrackedを自動許可せず、除外設定はまだありません。Planは検査前にsave-planで保存します。
 - 作業ツリーは保持し、未pushコミット履歴はflattenします。元の履歴やステージ区分をCloudへ完全移植する機能ではありません。
 - 秘密が必要な環境は停止します。Secretを自動登録・uploadする実装はありません。既存組織の全Secretを列挙／取得もしません。
 - 自動レシピ検出はNodeの単一ロックファイル構成。他言語・モノレポは明示レシピを現在エージェントが作ります。
 - Cursorのnamed envを優先。startingRefと同時指定できないため、承認済みの実行前Gitゲートを使います。API応答から正しいactive imageを断定せず、Build成功はLAUNCHABLEとして実行先に再確認させます。
 - Devinの既存共有Blueprintの自動上書き・採用、snapshot pin/cancel、組織内の他案件変更は行いません。既存環境の新しい構成を適用するには手動レビューが必要です。
-- Codexの環境準備は`https://chatgpt.com/settings/codex-cloud`から`Cloud Environment Onboarding: Setup`を実行する方式です。個別の環境作成・依存インストール・Publish操作は委譲し、未認証なら本人のログインを求めます。Setup名はユーザー指定であり、実アカウントでの動作確認とは区別します。認証前に未送信と観測できた場合だけ同一jobを再開し、Setup開始後の認証要求や成否不明は元の操作の再開・照合に限定します。
+- Codexの環境準備は`https://chatgpt.com/settings/codex-cloud`の`Cloud Environment Onboarding: Setup`へ委譲します。OffloadでCreate/Install/Publishを再実装せず、未認証ならログインを求め、保存済みjobを再開します。実アカウントでのSetup実行は未検証です。
 - CodexのGUIエンジンは内蔵しません。現在ホストの正規ブラウザ操作能力を利用するスキルです。観測JSONの形と一致はCoreが検査しますが、本当に画面を見たことの証明はホスト側のツール履歴に依存します。
 - UIやAPIの成否不明を「未作成」として再実行しません。安全に自動照合できない場合は停止。リモート操作の完全exactly-once保証は主張しません。
 - 状態取得は単発。常駐監視、通知、ホスト終了後のpoll、期限による自動削除はありません。Runtime stateはOS別ユーザー領域です。
@@ -36,3 +36,7 @@ Plan/Recipeの厳格な構造検査と参照関係検査、現在ホストのPla
 6. 必要なテストの実行証拠、未実行理由、成果物へのリンクを確認。
 
 API schemaやCLIの出力が違う場合は、採用した版の公式資料と応答fixtureを更新してから対応します。未公開APIの推測で穴埋めしません。
+
+## v0.1.3の実リポジトリ修正
+
+[復旧と検証範囲](recovery-v0.1.3.md)を参照してください。Claudeの`--bare`を除去し、ログインを維持する個別隔離へ変更しました。Node 26の実行検査、読み取り専用認証診断、本人用`trust --remember`を追加しています。

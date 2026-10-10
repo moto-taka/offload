@@ -3,6 +3,7 @@ import { CloudHTTP, remoteId } from './http.mjs';
 import { cursorEnvironment, devinBlueprint } from './plan.mjs';
 import { requireThat, fail, digest, repository, officialUrl, executable, run, redact } from './safety.mjs';
 import { checkoutSnapshot } from './git.mjs';
+import { inspectClaude, claudeEnvironment } from './claude-auth.mjs';
 
 const now = () => new Date().toISOString();
 const reposOf = env => (env.repos || []).map(r => repository(r.url)).sort();
@@ -13,7 +14,6 @@ export function cursorPayload(job, prompt, binding, environment) {
 export function devinPayload(job, prompt, binding) {
   return { prompt, title: `offload:${job.id}`, repos: [job.repository], ...(binding.createAsUserId ? { create_as_user_id: binding.createAsUserId } : {}) };
 }
-function claudeEnv() { const env={...process.env}; for(const k of Object.keys(env)) if(/(?:KEY|TOKEN|SECRET|PASSWORD|COOKIE|AUTHORIZATION)|^(?:ANTHROPIC_|CLAUDE_CODE_USE_|AWS_|GOOGLE_APPLICATION_CREDENTIALS)/i.test(k)) delete env[k]; return env; }
 function receipt(provider, id, url, extra = {}) { return { provider, id: remoteId(id), url: officialUrl(url, provider), acceptedAt: now(), resultVerdict: 'UNVERIFIED', ...extra }; }
 export class CursorAdapter {
   constructor(store, binding, options = {}) { this.store = store; this.binding = binding; this.http = new CloudHTTP('cursor', binding, options); }
@@ -119,20 +119,21 @@ export class ClaudeAdapter {
   constructor(store,binding,{ runFn = run } = {}) { this.store=store; this.binding=binding; this.runFn=runFn; }
   async ensure(job) {
     const b=this.binding;
-    requireThat(b.claudeCloudVerified && b.allowExperimental && b.allowSnapshotBundle, 'NEEDS_SETUP', 'Verify claude.ai managed Cloud/account and explicitly allow only the isolated snapshot bundle.');
-    const binary=executable(b.cliPath || 'claude',job.root), version=this.runFn(binary,['--version']);
-    const m=version.match(/\b(\d+)\.(\d+)\.(\d+)\b/);
-    requireThat(m && (+m[1]>2 || +m[1]===2 && (+m[2]>1 || +m[2]===1 && +m[3]>=224)), 'CLI_VERSION_UNSUPPORTED', 'Claude >=2.1.224 is required by the tested dispatch contract.');
-    let auth; try{auth=JSON.parse(this.runFn(binary,['auth','status'],{env:claudeEnv()}));}catch{fail('NEEDS_AUTH','Could not read official Claude auth status JSON.');}
-    requireThat(auth.loggedIn===true && auth.email && b.expectedPrincipal===auth.email && auth.authMethod==='oauth', 'ACCOUNT_MISMATCH', 'Claude must report the expected logged-in claude.ai OAuth account. Review changed auth-status schemas before enabling them.');
-    return { id:b.environmentId || null, state:'LAUNCHABLE', gate:'managed-cloud-account-and-code', version:m[0], observedAt:now() };
+    // Diagnose authentication before asking the user to edit any permission/config flags.
+    const auth=inspectClaude(b,job.root,this.runFn);
+    requireThat(b.expectedPrincipal, 'NEEDS_SETUP', 'Run setup claude to confirm the detected account.');
+    requireThat(b.claudeCloudVerified && b.allowExperimental && b.allowSnapshotBundle, 'NEEDS_SETUP', 'Run setup claude once to confirm the Cloud environment and isolated snapshot permissions. Do not hand-edit verification flags.');
+    requireThat(!b.environmentId?.startsWith('ccpool_'), 'INVALID_TARGET', 'Self-hosted environments are not Offload destinations.');
+    return { id:b.environmentId || null, state:'LAUNCHABLE', gate:'managed-cloud-account-and-code', version:auth.version, observedAt:now() };
   }
+
   async submit(job,prompt) {
     const b=this.binding, binary=executable(b.cliPath || 'claude',job.root);
-    const args=b.environmentId ? ['--bare','-p',prompt,'--environment',b.environmentId,'--ref',job.snapshot.ref.replace('refs/heads/',''),'--output-format','json'] : ['--bare','--cloud',prompt];
+    const isolation=['--setting-sources','','--settings','{"disableAllHooks":true}','--strict-mcp-config','--mcp-config','{"mcpServers":{}}','--disable-slash-commands'];
+    const args=b.environmentId ? [...isolation,'-p',prompt,'--environment',b.environmentId,'--ref',job.snapshot.ref.replace('refs/heads/',''),'--output-format','json'] : [...isolation,'--cloud',prompt];
     return this.store.once(`${job.id}:task`, { binary,args,commit:job.snapshot.commit }, async () => {
       const cwd=checkoutSnapshot(this.store,this.store.read(job.id,'manifest.json'),job.snapshot);
-      const env=claudeEnv();
+      const env=claudeEnvironment();
       try {
         const output=this.runFn(binary,args,{cwd,env,timeout:120_000}); let parsed;
         if(b.environmentId) { try { parsed=JSON.parse(output); } catch { fail('INVALID_RECEIPT','CLI did not return the documented JSON receipt.'); } }

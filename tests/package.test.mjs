@@ -30,7 +30,7 @@ test('symlink-installed runtime executes its main entrypoint',()=>{const dir=tem
 test('package support is explicitly bounded to Node.js 26',()=>{
   const pkg=JSON.parse(fs.readFileSync(path.join(root,'package.json'),'utf8'));
   assert.equal(pkg.engines.node, '>=26.0.0 <27.0.0');
-  assert.equal(pkg.version, '0.1.2');
+  assert.equal(pkg.version, '0.1.3');
 });
 test('Node version manager files both select the 26 release line',()=>{
   for(const file of ['.nvmrc','.node-version'])
@@ -49,5 +49,5 @@ test('standalone skill and CLI describe the same Node requirement',()=>{
   assert.equal(result.status,0,result.stderr);
   const help=JSON.parse(result.stdout);
   assert.equal(help.node,'>=26.0.0 <27.0.0');
-  assert.equal(help.version,'0.1.2');
+  assert.equal(help.version,'0.1.3');
 });

@@ -11,7 +11,15 @@
   → Cloudの受付情報を元の会話へ
 ```
 
-**0.1.2 / experimental** — 実行コードと自動テストを含みます。実アカウントのCloud作成・課金を伴うE2Eは未検証です。スキルをインストールしても、各社の認証やCloud権限が自動で付くわけではありません。
+**0.1.3 / experimental** — 実行コードと自動テストを含みます。実アカウントのCloud作成・課金を伴うE2Eは未検証です。スキルをインストールしても、各社の認証やCloud権限が自動で付くわけではありません。
+
+## v0.1.3：実リポジトリでの停止を修正
+
+Planを最初に保存し、その後にGit・Node・認証を検査します。リポジトリ内のスキル用シンボリックリンクはリンクのまま保持し、全体20MiB制限を撤廃しました。ファイル内容は巨大なbase64 JSONへ保存せず、送信時にハッシュを再確認します。外部参照リンク、submodule、LFS、秘密情報は引き続き別扱いです。
+
+Node.js 26はOffloadの実行にだけ使用します。対象アプリの`.nvmrc`やNode 24環境を勝手に変更しません。既存の導入と同じスコープでスキルを更新し、Claudeでは`auth claude`→初回`setup claude`でCLIのログインを利用します。`trust --remember`は本人が希望した場合だけ、同じアカウント・repo・環境構成への承認を記憶します。
+
+具体的な復旧手順は[トラブルシューティング](skills/offload/references/troubleshooting.md)、変更・検証範囲は[v0.1.3](docs/recovery-v0.1.3.md)を参照してください。スキル自体は現会話の内容を使ってPlanを生成します。
 
 ## skills.shからインストール
 
@@ -33,8 +41,9 @@ skills.shの一覧への掲載時期・検索順位は、このリポジトリ�
 
 ```bash
 nvm install 26
-nvm use 26
-node --version
+nvm exec 26 node --version
+# Offloadだけ26で実行（対象アプリのruntimeは変更しません）
+nvm exec 26 node "<installed-skill>/scripts/offload.mjs" doctor
 ```
 
 2026年10月9日時点ではNode.js 26はCurrentで、公式スケジュール上のLTS移行予定日は2026年10月28日です。`lts/*`ではなく26系を明示しているため、LTS移行後も同じ設定を使えます。

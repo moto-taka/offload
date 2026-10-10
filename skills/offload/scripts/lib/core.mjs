@@ -4,44 +4,70 @@ import { randomUUID } from 'node:crypto';
 import { Store } from './store.mjs';
 import { validatePlan, validateRecipe, recipeHash, renderPlan, renderExecution, cursorEnvironment } from './plan.mjs';
 import { loadConfig, resolveTarget, bindingFor, approvalHash } from './config.mjs';
-import { capture, inspectRecipe, verifyCapture, publishSnapshot } from './git.mjs';
+import { capture, inspectRecipe, verifyCapture, publishSnapshot, readCapturedFile } from './git.mjs';
 import { adapter } from './providers.mjs';
 import { digest, makeId, inside, requireThat, fail, writePrivate, officialUrl, scanSecrets } from './safety.mjs';
 import { remoteId } from './http.mjs';
 import { codexOnboarding, renderCodexOnboarding, CODEX_SETTINGS_URL } from './codex-onboarding.mjs';
 
 export function publicJob(j) {
-  return { id:j.id, state:j.state, provider:j.provider, repository:j.repository, planHash:j.planHash, recipeHash:j.recipeHash, manifestHash:j.manifestHash, approvalHash:j.approvalHash, dispatchHash:j.dispatchHash, accountLabel:j.accountLabel, bindingId:j.bindingId, environment:j.environment, snapshot:j.snapshot, receipt:j.receipt, observation:j.observation, error:j.error, preview:j.preview };
+  return { id:j.id, state:j.state, planPath:j.planPath, provider:j.provider, repository:j.repository, planHash:j.planHash, recipeHash:j.recipeHash, manifestHash:j.manifestHash, approvalHash:j.approvalHash, dispatchHash:j.dispatchHash, accountLabel:j.accountLabel, bindingId:j.bindingId, environment:j.environment, snapshot:j.snapshot, receipt:j.receipt, observation:j.observation, error:j.error, preview:j.preview };
 }
 export class Core {
   constructor(root,options={}) { this.store=new Store(root); this.options=options; }
   close(){this.store.close();}
   config(){return loadConfig(this.store.root);}
-  async prepare({plan,recipe,repo=process.cwd(),host='unknown',target,requestId,preview=false}) {
+  // Phase 1 has no Git/export/auth preconditions: save the current conversation first.
+  async savePlan({plan,recipe,repo=process.cwd(),host='unknown',target,requestId,preview=false}) {
     validatePlan(plan);
-    const c=this.config(); let provider=null, targetError;
-    try{provider=resolveTarget(host,target,c);}catch(e){targetError=e;}
     const root=path.resolve(repo);
     requireThat(!inside(root,this.store.root),'UNSAFE_STATE','Runtime state must be outside the repository.');
-    // Persist the plan even if Git/setup inspection is blocked. Neither preview nor prepare performs network writes.
-    let manifest, captureError; try{manifest=capture(root);}catch(e){captureError=e;}
-    const key=digest({requestId:requestId||null,root,host,provider,plan:digest(plan),source:manifest?.fingerprint||null,preview});
+    const key=digest({requestId:requestId||null,root,host,target:target||null,plan:digest(plan),preview});
     return this.store.locked(`request:${key}`,async()=>{
       const old=this.store.byRequest(key); if(old)return publicJob(old);
-      const job={id:makeId(),requestKey:key,root,host,provider,preview,planHash:digest(plan),state:'PLAN_READY',createdAt:new Date().toISOString(),resultVerdict:'UNVERIFIED'};
-      this.store.create(job);this.store.artifact(job.id,'plan.json',plan);writePrivate(this.store.file(job.id,'plan.md'),renderPlan(plan));
-      try{
-        if(targetError)throw targetError;if(captureError)throw captureError;
-        requireThat(!inside(manifest.root,this.store.root),'UNSAFE_STATE','Runtime state must be outside the actual Git root.');
-        job.root=manifest.root;job.repository=manifest.repository;job.manifestHash=digest(manifest);this.store.artifact(job.id,'manifest.json',manifest);
-        if(!recipe){const inferred=inspectRecipe(manifest);requireThat(inferred.recipe,'NEEDS_RECIPE',inferred.reason);recipe=inferred.recipe;}
-        validateRecipe(recipe);requireThat(recipe.source_commit===manifest.head,'RECIPE_SOURCE_MISMATCH','Recipe must be authored from the captured HEAD.');
-        job.recipeHash=recipeHash(recipe,manifest.files);job.recipeDocumentHash=digest(recipe);this.store.artifact(job.id,'recipe.json',recipe);
-        if(preview){job.state='PREVIEW_READY';}
-        else {const b=bindingFor(c,job.repository,provider);job.approvalHash=approvalHash(job,b);job.state='NEEDS_APPROVAL';}
-      }catch(e){this.block(job,e);}
+      const job={id:makeId(),requestKey:key,root,host,requestedTarget:target||null,preview,planHash:digest(plan),state:'PLAN_READY',createdAt:new Date().toISOString(),resultVerdict:'UNVERIFIED'};
+      job.planPath=this.store.file(job.id,'plan.md');
+      this.store.create(job);
+      this.store.artifact(job.id,'plan.json',plan);
+      writePrivate(job.planPath,renderPlan(plan));
+      try {
+        job.provider=resolveTarget(host,target,this.config());
+        if(recipe){validateRecipe(recipe);this.store.artifact(job.id,'recipe-draft.json',recipe);job.recipeDraftHash=digest(recipe);}
+      } catch(e){this.block(job,e);}
       this.store.save(job);return publicJob(job);
     });
+  }
+  // Called only while holding the job lease. A failed phase never deletes the saved Plan.
+  hydrate(job,recipe) {
+    const plan=this.store.read(job.id,'plan.json');
+    requireThat(digest(plan)===job.planHash,'ARTIFACT_CHANGED','Saved Plan changed.');
+    validatePlan(plan);
+    if(!job.provider)job.provider=resolveTarget(job.host,job.requestedTarget||undefined,this.config());
+    const manifest=capture(job.root);
+    requireThat(!inside(manifest.root,this.store.root),'UNSAFE_STATE','Runtime state must be outside the actual Git root.');
+    if(job.manifestHash)requireThat(digest(manifest)===job.manifestHash,'SOURCE_CHANGED','Repository changed since preparation; create a new request.');
+    job.root=manifest.root;job.repository=manifest.repository;job.manifestHash=digest(manifest);
+    this.store.artifact(job.id,'manifest.json',manifest);
+    if(!recipe&&job.recipeDraftHash){recipe=this.store.read(job.id,'recipe-draft.json');requireThat(digest(recipe)===job.recipeDraftHash,'ARTIFACT_CHANGED','Saved recipe changed.');}
+    if(!recipe){const inferred=inspectRecipe(manifest);requireThat(inferred.recipe,'NEEDS_RECIPE',inferred.reason);recipe=inferred.recipe;}
+    validateRecipe(recipe);
+    requireThat(recipe.source_commit===manifest.head,'RECIPE_SOURCE_MISMATCH','Recipe must be authored from the captured HEAD.');
+    job.recipeHash=recipeHash(recipe,manifest.files);job.recipeDocumentHash=digest(recipe);this.store.artifact(job.id,'recipe.json',recipe);
+    if(job.preview)job.state='PREVIEW_READY';
+    else{const b=bindingFor(this.config(),job.repository,job.provider);job.approvalHash=approvalHash(job,b);job.state='NEEDS_APPROVAL';}
+    delete job.error;
+  }
+  async prepareSaved(id,recipe){return this.store.locked(`job:${id}`,async()=>{
+    const job=this.store.get(id);
+    if(job.receipt)return publicJob(job);
+    if(job.manifestHash&&job.recipeDocumentHash){requireThat(!recipe||digest(recipe)===job.recipeDocumentHash,'ARTIFACT_CHANGED','A prepared recipe cannot be replaced in place.');return publicJob(job);}
+    try{this.hydrate(job,recipe);}catch(e){this.block(job,e);}
+    this.store.save(job);return publicJob(job);
+  });}
+  async prepare(input){
+    const saved=await this.savePlan(input);
+    if(saved.error)return saved;
+    return this.prepareSaved(saved.id,input.recipe);
   }
   block(job,e){job.state=e.code||'BLOCKED';job.error={code:e.code||'BLOCKED',message:e.code?e.message:'Unexpected local failure; no raw output retained.',...(e.details?{details:e.details}:{})};}
   inputs(id){
@@ -65,6 +91,7 @@ export class Core {
   }
   async submit(id){return this.store.locked(`job:${id}`,async()=>{
     const current=this.store.get(id);if(current.receipt)return publicJob(current);
+    if(!current.manifestHash||!current.recipeDocumentHash){try{this.hydrate(current);}catch(e){this.block(current,e);this.store.save(current);return publicJob(current);}this.store.save(current);}
     if(current.provider==='codex'&&current.state==='NEEDS_AUTH')return publicJob(current);
     const completed=this.store.operation(`${id}:task`) || this.store.operation(`${id}:ui:task`);
     if(completed?.state==='DONE'){current.receipt=JSON.parse(completed.result);current.state='SUBMITTED';delete current.error;this.store.save(current);return publicJob(current);}
@@ -73,7 +100,7 @@ export class Core {
       if(job.provider==='codex'){
         job.state='NEEDS_UI_DRIVER';job.error={code:'NEEDS_UI_DRIVER',message:'Open ChatGPT Codex Cloud settings and run Cloud Environment Onboarding: Setup. Request login if needed; follow references/codex-ui.md for the saved job.',details:{onboarding:codexOnboarding(job.repository)}};this.store.save(job);return publicJob(job);
       }
-      if(job.provider==='cursor'){const override=manifest.files.find(f=>f.path==='.cursor/environment.json');if(override){let value;try{value=JSON.parse(Buffer.from(override.data,'base64').toString());}catch{fail('ENV_BINDING_AMBIGUOUS','Repository Cursor environment JSON is invalid.');}requireThat(digest(value)===digest(cursorEnvironment(recipe)),'ENV_BINDING_AMBIGUOUS','Repository .cursor/environment.json differs from the approved environment configuration.');}}
+      if(job.provider==='cursor'){const override=manifest.files.find(f=>f.path==='.cursor/environment.json');if(override){let value;try{value=JSON.parse(readCapturedFile(manifest,override).toString());}catch{fail('ENV_BINDING_AMBIGUOUS','Repository Cursor environment JSON is invalid.');}requireThat(digest(value)===digest(cursorEnvironment(recipe)),'ENV_BINDING_AMBIGUOUS','Repository .cursor/environment.json differs from the approved environment configuration.');}}
       const a=adapter(this.store,binding,this.options);
       job.state='ENVIRONMENT_PREPARING';delete job.error;this.store.save(job);
       job.environment=await this.store.locked(`env:${binding.provider}:${binding.organizationId||binding.id}`,()=>a.ensure(job,recipe));this.store.save(job);

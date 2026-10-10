@@ -2,6 +2,8 @@
 
 Requires Node.js 26.x (>=26.0.0 <27.0.0), Git, and access to the destination's provider-managed cloud. `skills add` installs the skill files, not provider accounts, browser permissions or subscriptions. No npm publish is needed for GitHub-source skills installation.
 
+Save the current WorkPlan first with `save-plan`. Setup uses Git identity only, not the full exporter; links and repository size cannot prevent authentication setup. On a host using Node 24, use `nvm exec 26 node "<skill>/scripts/offload.mjs" ...` for Offload after installing 26 with approval. Do not change the application's runtime.
+
 ## Human setup
 
 Find the script next to the installed SKILL.md:
@@ -26,7 +28,7 @@ node "<skill>/scripts/offload.mjs" resume "ofl_<uuid>"
 
 Read the full source file list, untracked files, environment commands, account and provider flags. The human types APPROVE. Agents must not fabricate this step. The approval fingerprint binds Plan, recipe, file manifest and the entire provider binding; changing any invalidates the approval.
 
-For a user's intentionally unattended workflow, set `autoApprove: true` and add only reviewed environment fingerprints to `approvedRecipeHashes` in the trusted config. This still requires exact provider/repository binding, snapshot-push permission and no newly untracked files. Config changes are user-controlled, not made by the skill.
+For remembered approval, the user may run `trust <job-id> --remember` in an actual terminal, review the scope and type APPROVE. This sets a policy for the exact binding and reviewed recipe, not all repositories. Agents must not answer the prompt themselves. Alternatively, for a user's intentionally unattended workflow, set `autoApprove: true` and add only reviewed environment fingerprints to `approvedRecipeHashes` in the trusted config. This still requires exact provider/repository binding, snapshot-push permission and no newly untracked files. Config changes are user-controlled, not made by the skill.
 
 ## Provider-specific prerequisites
 
@@ -40,9 +42,19 @@ Offload delegates environment creation/configuration to this ChatGPT workflow; i
 
 ### Claude Code Cloud
 
-Install the official CLI, sign in with claude.ai and connect GitHub through official onboarding. Default managed environments may be prepared automatically; custom environments are configured in the UI. Use `claudeCloudVerified: true` only after confirming managed cloud (not Remote Control or a self-hosted environment), `expectedPrincipal` with the signed-in email, and optional `environmentId`.
+Run the read-only diagnostic first:
 
-This release checks CLI >=2.1.224 and the JSON from `claude auth status` (`loggedIn`, `authMethod`, `email`). A changed schema stops rather than guesses. `allowSnapshotBundle` explicitly permits the CLI's fallback **only inside a newly-created depth-1 checkout of the reviewed snapshot**. CLI auth is reused without reading OAuth token files. API credentials and alternate provider environment variables are not forwarded. `--bare` disables local hooks/plugins in the dispatch process. No local coding session is intentionally started.
+```sh
+node "<skill>/scripts/offload.mjs" auth claude --repo "/absolute/project"
+```
+
+It runs the official `claude --version` and `claude auth status`. Missing login returns `NEEDS_AUTH` with `claude auth login` (or `/login`). It accepts subscription authentication reported as `claude.ai` or `oauth`, not an API-key/third-party provider, and reports the account without reading tokens.
+
+In a real terminal `setup claude` discovers the CLI and pre-fills the observed email; the user confirms permissions rather than manually editing boolean fields. Keep `claudeCloudVerified` for a confirmed Anthropic-managed Cloud environment and `allowExperimental` as an honest opt-in to the not-live-tested adapter. CLI login alone does not prove GitHub access, managed Cloud availability or budget approval. A custom environment ID is optional; default must be verified. Known self-hosted `ccpool_` IDs are refused.
+
+CLI >=2.1.224 remains required for this dispatch interface. `allowSnapshotBundle` authorizes fallback only inside a new depth-1 checkout of the reviewed tree. API credentials and alternate-provider environment variables are not forwarded. **Do not use `--bare`: it skips OAuth/keychain login and conflicts with subscription dispatch.** Instead the launcher disables normal setting sources, hooks, MCP and slash skills individually while retaining the official login location. No local coding session or alternate paid API is started.
+
+See [troubleshooting.md](troubleshooting.md) for a complete save/prepare/setup/trust/resume sequence and the remaining real-provider verification limits.
 
 ### Cursor
 

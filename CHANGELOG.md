@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.3 — 2026-10-10
+
+- Save Plans before Git/runtime/account preflight and resume the same job; never switch to a clean source branch just to pass inspection.
+- Preserve safe repository-internal symlinks, remove the 20 MiB aggregate cap and store metadata instead of base64 file bodies. Add a 60 MiB/22-link Git round-trip regression.
+- Diagnose Node 26 and Claude subscription login. Remove incompatible --bare, keep individual settings/hooks/MCP isolation, and support user-only trust --remember.
+- Preserve ChatGPT Setup onboarding and all Cloud-only/account approval boundaries.
+
 ## 0.1.2 — 2026-10-10
 
 - Delegate new Codex environment setup to ChatGPT Settings → **Cloud Environment Onboarding: Setup** with a repository-specific prompt. Remove the duplicated Create/Install/Publish instructions and manual environment-ID question.

@@ -23,6 +23,6 @@ If automatic inference cannot handle a stack, author an explicit recipe. Unresol
 
 ## Payload and input limits
 
-WorkPlan: 48,000 UTF-8 bytes; recipe: 32,000; rendered dispatch: 100,000. Files: 5 MiB each, snapshot: 20 MiB, at most 10,000 regular files. Required constraints cannot be silently dropped to meet a limit. LFS, submodules, credential files, symlinked exports and case-colliding paths stop preparation.
+WorkPlan: 48,000 UTF-8 bytes; recipe: 32,000; rendered dispatch: 100,000. Files: up to 100 MiB each and 100,000 entries. No aggregate repository-size cap; manifests store hashes/metadata, not embedded file contents. Required constraints cannot be silently dropped to meet a limit. LFS, submodules, credential files, unsafe/outside/dangling links and case-colliding paths stop preparation. Repository-internal relative symlinks are preserved as Git mode 120000 without dereferencing. Save the Plan before running inspection.
 
 Evidence locators must describe actual visible messages/tool outputs or repo-relative files; do not include unreachable local absolute paths in the cloud Plan. Required images/binaries need an explicitly supported transport; this version does not silently convert a visual requirement into an inaccurate summary.
